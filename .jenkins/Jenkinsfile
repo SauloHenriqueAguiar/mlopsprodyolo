@@ -1,61 +1,133 @@
 pipeline {
-  agent any
-  environment {
-    ECR_REPOSITORY = credentials('ECR_REPOSITORY')
-    AWS_ACCOUNT_ID = credentials('AWS_ACCOUNT_ID')
-    AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
-  }
-  
-  stages {
-    stage('Continuous Integration') {
-      steps {
-        script {
-          echo "Linting repository"
-          echo "Running unit tests"
-        }
-      }
+    agent any
+    
+    environment {
+        ECR_REPOSITORY = credentials('ECR_REPOSITORY')
+        AWS_ACCOUNT_ID = credentials('AWS_ACCOUNT_ID')
+        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+        AWS_DEFAULT_REGION = 'us-east-1'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        FULL_IMAGE_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${ECR_REPOSITORY}"
     }
-
-    stage('Login to ECR') {
-      steps {
-        script {
-          sh 'aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com'
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
         }
-
-      }
-    }
-
-    stage('Build Image') {
-      steps {
-        script {
-          sh 'docker build -t ${ECR_REPOSITORY}:latest .'
+        
+        stage('Continuous Integration') {
+            steps {
+                script {
+                    echo "Linting repository"
+                    echo "Running unit tests"
+                    // Adicione aqui seus testes se necessário
+                    // sh 'python -m pytest tests/ || true'
+                }
+            }
         }
 
-      }
-    }
-
-    stage('Push Image') {
-      steps {
-        script {
-          sh 'docker push ${ECR_REPOSITORY}:latest'
+        stage('Configure AWS') {
+            steps {
+                script {
+                    sh '''
+                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                        aws configure set default.region $AWS_DEFAULT_REGION
+                    '''
+                }
+            }
         }
 
-      }
-    }
-
-    stage('Continuous Deployment') {
-      steps {
-        sshagent(['ssh_key']) {
-          sh "ssh -o StrictHostKeyChecking=no -l ubuntu 107.20.78.236 'cd /home/ubuntu/ && wget https://github.com/SauloHenriqueAguiar/mlopsprodyolo/blob/main/docker-compose.yml && export IMAGE_NAME=${ECR_REPOSITORY}:latest && aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com && docker compose up -d '"
+        stage('Login to ECR') {
+            steps {
+                script {
+                    sh '''
+                        aws ecr get-login-password --region $AWS_DEFAULT_REGION | \
+                        docker login --username AWS --password-stdin $FULL_IMAGE_URI
+                    '''
+                }
+            }
         }
-      }
-    }
-  }
 
-  post {
-    always {
-      sh 'docker system prune -f'
+        stage('Build Image') {
+            steps {
+                script {
+                    sh '''
+                        echo "Building Docker image..."
+                        docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+                        docker tag $ECR_REPOSITORY:$IMAGE_TAG $FULL_IMAGE_URI:$IMAGE_TAG
+                        docker tag $ECR_REPOSITORY:$IMAGE_TAG $FULL_IMAGE_URI:latest
+                        echo "Image built successfully!"
+                    '''
+                }
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                script {
+                    sh '''
+                        docker push $FULL_IMAGE_URI:$IMAGE_TAG
+                        docker push $FULL_IMAGE_URI:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Continuous Deployment') {
+            steps {
+                sshagent(['ssh_key']) {
+                    script {
+                        sh '''
+                            ssh -o StrictHostKeyChecking=no ubuntu@107.20.78.236 "
+                                # Limpar containers antigos
+                                docker compose down || true
+                                
+                                # Baixar docker-compose.yml atualizado
+                                curl -o docker-compose.yml https://raw.githubusercontent.com/SauloHenriqueAguiar/mlopsprodyolo/main/docker-compose.yml
+                                
+                                # Configurar AWS no servidor
+                                aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                                aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                                aws configure set default.region $AWS_DEFAULT_REGION
+                                
+                                # Login no ECR
+                                aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $FULL_IMAGE_URI
+                                
+                                # Definir variável de ambiente e subir aplicação
+                                export IMAGE_NAME=$FULL_IMAGE_URI:latest
+                                docker compose up -d
+                                
+                                # Verificar status
+                                docker compose ps
+                            "
+                        '''
+                    }
+                }
+            }
+        }
     }
-  }
+
+    post {
+        always {
+            script {
+                sh '''
+                    # Limpar imagens locais do Jenkins
+                    docker image rm $ECR_REPOSITORY:$IMAGE_TAG || true
+                    docker image rm $FULL_IMAGE_URI:$IMAGE_TAG || true
+                    docker image rm $FULL_IMAGE_URI:latest || true
+                    docker system prune -f
+                '''
+            }
+        }
+        success {
+            echo 'Pipeline executado com sucesso!'
+        }
+        failure {
+            echo 'Pipeline falhou. Verifique os logs para mais detalhes.'
+        }
+    }
 }
