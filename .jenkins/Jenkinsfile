@@ -23,8 +23,7 @@ pipeline {
                 script {
                     echo "Linting repository"
                     echo "Running unit tests"
-                    // Adicione aqui seus testes se necessário
-                    // sh 'python -m pytest tests/ || true'
+               
                 }
             }
         }
