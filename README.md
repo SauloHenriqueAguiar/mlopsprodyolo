@@ -30,6 +30,8 @@ OpenCV: Pré-processamento de imagens médicas
 
 ### MLOps & Infraestrutura:
 
+MLFlow: Versionamento do Modelo e Experimentos
+
 Docker: Containerização dos componentes
 
 Kubernetes (EKS): Orquestração de containers na AWS
