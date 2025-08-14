@@ -1,7 +1,8 @@
 
 Pipeline completo de **MLOps** para classificação de imagens médicas de tomografia computadorizada de tórax, distinguindo entre casos normais e adenocarcinoma. O sistema utiliza arquitetura de microserviços em **Kubernetes** com automação **CI/CD** e escalabilidade automática.
 
-```mermaid
+
+
 graph TB
     A[GitHub Repository] --> B[Jenkins CI/CD]
     B --> C[Docker Build]
