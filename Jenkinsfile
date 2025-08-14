@@ -19,20 +19,6 @@ pipeline {
                 checkout scm
             }
         }
-        
-        stage('Setup kubectl') {
-            steps {
-                script {
-                    sh '''
-                        if ! command -v kubectl &> /dev/null; then
-                            curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
-                            chmod +x kubectl
-                            sudo mv kubectl /usr/local/bin/
-                        fi
-                    '''
-                }
-            }
-        }
 
         stage('Configure AWS & EKS') {
             steps {
@@ -64,7 +50,7 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        echo "Building Docker image..."
+                        echo "Building Docker image with cache..."
                         docker build --cache-from $FULL_IMAGE_URI:latest -t $ECR_REPOSITORY:$IMAGE_TAG .
                         docker tag $ECR_REPOSITORY:$IMAGE_TAG $FULL_IMAGE_URI:$IMAGE_TAG
                         docker tag $ECR_REPOSITORY:$IMAGE_TAG $FULL_IMAGE_URI:latest
@@ -81,10 +67,8 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        # Aplicar manifests
                         kubectl apply -f k8s/namespace.yaml
                         
-                        # Criar/atualizar ECR secret
                         kubectl delete secret ecr-registry-secret -n $NAMESPACE --ignore-not-found=true
                         kubectl create secret docker-registry ecr-registry-secret \
                             --docker-server=$FULL_IMAGE_URI \
@@ -92,15 +76,15 @@ pipeline {
                             --docker-password=$(aws ecr get-login-password --region $AWS_DEFAULT_REGION) \
                             --namespace=$NAMESPACE
                         
-                        # Atualizar deployment com nova imagem
                         sed "s|PLACEHOLDER_IMAGE_URI|$FULL_IMAGE_URI:$IMAGE_TAG|g" k8s/deployment.yaml | kubectl apply -f -
                         kubectl apply -f k8s/service.yaml
                         kubectl apply -f k8s/ingress.yaml
                         kubectl apply -f k8s/hpa.yaml
                         
-                        # Aguardar deploy
                         kubectl rollout status deployment/cnn-classifier -n $NAMESPACE --timeout=600s
                         kubectl get pods -n $NAMESPACE
+                        kubectl get svc -n $NAMESPACE
+                        kubectl get ingress -n $NAMESPACE
                     '''
                 }
             }
@@ -124,6 +108,7 @@ pipeline {
         failure {
             script {
                 sh '''
+                    echo "❌ Pipeline falhou. Coletando logs..."
                     kubectl logs -l app=cnn-classifier -n $NAMESPACE --tail=50 || true
                     kubectl describe deployment cnn-classifier -n $NAMESPACE || true
                 '''
