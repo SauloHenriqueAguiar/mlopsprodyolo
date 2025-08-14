@@ -28,7 +28,13 @@ pipeline {
                         aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
                         aws configure set default.region $AWS_DEFAULT_REGION
                         
+                        # Verificar se kubectl funciona
+                        kubectl version --client
+                        
+                        # Configurar kubeconfig
                         aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $EKS_CLUSTER_NAME
+                        
+                        # Testar conexão
                         kubectl get nodes
                     '''
                 }
@@ -67,8 +73,12 @@ pipeline {
             steps {
                 script {
                     sh '''
+                        echo "Deploying to EKS..."
+                        
+                        # Aplicar namespace
                         kubectl apply -f k8s/namespace.yaml
                         
+                        # Criar/atualizar secret do ECR
                         kubectl delete secret ecr-registry-secret -n $NAMESPACE --ignore-not-found=true
                         kubectl create secret docker-registry ecr-registry-secret \
                             --docker-server=$FULL_IMAGE_URI \
@@ -76,12 +86,18 @@ pipeline {
                             --docker-password=$(aws ecr get-login-password --region $AWS_DEFAULT_REGION) \
                             --namespace=$NAMESPACE
                         
+                        # Deploy da aplicação
                         sed "s|PLACEHOLDER_IMAGE_URI|$FULL_IMAGE_URI:$IMAGE_TAG|g" k8s/deployment.yaml | kubectl apply -f -
                         kubectl apply -f k8s/service.yaml
                         kubectl apply -f k8s/ingress.yaml
                         kubectl apply -f k8s/hpa.yaml
                         
+                        # Aguardar deploy
+                        echo "Aguardando rollout..."
                         kubectl rollout status deployment/cnn-classifier -n $NAMESPACE --timeout=600s
+                        
+                        # Mostrar status
+                        echo "Status do deployment:"
                         kubectl get pods -n $NAMESPACE
                         kubectl get svc -n $NAMESPACE
                         kubectl get ingress -n $NAMESPACE
@@ -95,6 +111,7 @@ pipeline {
         always {
             script {
                 sh '''
+                    # Limpar imagens locais
                     docker image rm $ECR_REPOSITORY:$IMAGE_TAG || true
                     docker image rm $FULL_IMAGE_URI:$IMAGE_TAG || true
                     docker image rm $FULL_IMAGE_URI:latest || true
