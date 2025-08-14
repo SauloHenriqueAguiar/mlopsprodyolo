@@ -4,15 +4,16 @@ Pipeline completo de **MLOps** para classificação de imagens médicas de tomog
 
 
 graph TB
-    A[GitHub Repository] --> B[Jenkins CI/CD]
-    B --> C[Docker Build]
-    C --> D[AWS ECR]
-    D --> E[EKS Cluster]
-    E --> F[Load Balancer]
-    F --> G[Auto Scaling Pods]
-    H[DVC Pipeline] --> I[Model Training]
-    I --> J[Model Artifacts]
-    J --> E
+
+        A[GitHub Repository] --> B[Jenkins CI/CD]
+        B --> C[Docker Build]
+        C --> D[AWS ECR]
+        D --> E[EKS Cluster]
+        E --> F[Load Balancer]
+        F --> G[Auto Scaling Pods]
+        H[DVC Pipeline] --> I[Model Training]
+        I --> J[Model Artifacts]
+        J --> E
 
 
 ## Stack Tecnológica:
