@@ -19,30 +19,23 @@ pipeline {
                 checkout scm
             }
         }
-        
-        stage('Setup kubectl') {
-            steps {
-                script {
-                    sh '''
-                        if ! command -v kubectl &> /dev/null; then
-                            curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
-                            chmod +x kubectl
-                            sudo mv kubectl /usr/local/bin/
-                        fi
-                    '''
-                }
-            }
-        }
 
         stage('Configure AWS & EKS') {
             steps {
                 script {
                     sh '''
+                        echo "Configurando AWS e EKS..."
                         aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
                         aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
                         aws configure set default.region $AWS_DEFAULT_REGION
                         
+                        # Verificar kubectl
+                        kubectl version --client
+                        
+                        # Configurar kubeconfig
                         aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $EKS_CLUSTER_NAME
+                        
+                        # Testar conexão
                         kubectl get nodes
                     '''
                 }
@@ -53,6 +46,7 @@ pipeline {
             steps {
                 script {
                     sh '''
+                        echo "Fazendo login no ECR..."
                         aws ecr get-login-password --region $AWS_DEFAULT_REGION | \
                         docker login --username AWS --password-stdin $FULL_IMAGE_URI
                     '''
@@ -81,10 +75,12 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        # Aplicar manifests
+                        echo "Deploying to EKS..."
+                        
+                        # Aplicar namespace
                         kubectl apply -f k8s/namespace.yaml
                         
-                        # Criar/atualizar ECR secret
+                        # Criar secret do ECR
                         kubectl delete secret ecr-registry-secret -n $NAMESPACE --ignore-not-found=true
                         kubectl create secret docker-registry ecr-registry-secret \
                             --docker-server=$FULL_IMAGE_URI \
@@ -92,7 +88,7 @@ pipeline {
                             --docker-password=$(aws ecr get-login-password --region $AWS_DEFAULT_REGION) \
                             --namespace=$NAMESPACE
                         
-                        # Atualizar deployment com nova imagem
+                        # Deploy da aplicação
                         sed "s|PLACEHOLDER_IMAGE_URI|$FULL_IMAGE_URI:$IMAGE_TAG|g" k8s/deployment.yaml | kubectl apply -f -
                         kubectl apply -f k8s/service.yaml
                         kubectl apply -f k8s/ingress.yaml
@@ -100,7 +96,11 @@ pipeline {
                         
                         # Aguardar deploy
                         kubectl rollout status deployment/cnn-classifier -n $NAMESPACE --timeout=600s
+                        
+                        # Status
                         kubectl get pods -n $NAMESPACE
+                        kubectl get svc -n $NAMESPACE
+                        kubectl get ingress -n $NAMESPACE
                     '''
                 }
             }
@@ -119,7 +119,7 @@ pipeline {
             }
         }
         success {
-            echo '✅ Deploy no EKS concluído com sucesso!'
+            echo '✅ Deploy no EKS concluído!'
         }
         failure {
             script {
